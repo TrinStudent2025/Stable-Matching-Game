@@ -1,0 +1,182 @@
+import networkx as nx
+import random
+import matplotlib.pyplot as plt
+from ipywidgets import Button, Output, VBox, HBox, Layout
+from IPython.display import display
+
+class VisualMatchingGame:
+    def __init__(self, n_left=4, n_right=4, p=0.6):
+        """
+        Initialize game parameters and UI widgets.
+          - n_left, n_right: Number of nodes on each side (bipartite graph).
+          - p: Probability for an edge between a left and right node.
+        """
+        self.n_left = n_left
+        self.n_right = n_right
+        self.p = p
+        self.graph = None
+        self.current_matching = set()
+        
+        # Output widgets for graph display and messages.
+        self.graph_out = Output()
+        self.msg_out = Output()
+        # Container for move buttons.
+        self.moves_box = HBox([])
+        
+        # Restart button to start a new game.
+        self.restart_button = Button(description="Restart", button_style='warning')
+        self.restart_button.on_click(self.restart_game)
+        
+        # Main container to hold everything.
+        self.container = VBox([self.graph_out, self.msg_out, self.moves_box, self.restart_button])
+        
+        # Start the game.
+        self.reset_game()
+        display(self.container)
+        
+    def reset_game(self):
+        """Generates a new bipartite graph and resets the matching."""
+        self.graph = self.generate_bipartite_graph()
+        self.current_matching = set()
+        self.update_ui()
+        
+    def generate_bipartite_graph(self):
+        """
+        Generate a random bipartite graph.
+        Left nodes are numbered 1..n_left and right nodes are numbered n_left+1..n_left+n_right.
+        """
+        B = nx.Graph()
+        left_nodes = list(range(1, self.n_left+1))
+        right_nodes = list(range(self.n_left+1, self.n_left+self.n_right+1))
+        B.add_nodes_from(left_nodes, bipartite=0)
+        B.add_nodes_from(right_nodes, bipartite=1)
+        for u in left_nodes:
+            for v in right_nodes:
+                if random.random() < self.p:
+                    B.add_edge(u, v)
+        return B
+    
+    def get_valid_moves(self):
+        """
+        Return a list of edges that can be added to the matching.
+        An edge is valid if both its endpoints are not already matched.
+        """
+        used = set()
+        for edge in self.current_matching:
+            used.update(edge)
+        valid = []
+        for edge in self.graph.edges():
+            if edge[0] not in used and edge[1] not in used:
+                valid.append(edge)
+        return valid
+    
+    def update_ui(self):
+        """Refresh the graph display, available moves, and status messages."""
+        self.draw_graph()
+        valid_moves = self.get_valid_moves()
+        
+        self.msg_out.clear_output()
+        with self.msg_out:
+            print("Current Matching:", self.current_matching)
+        
+        # If valid moves exist, create buttons for each.
+        if valid_moves:
+            move_buttons = []
+            for edge in valid_moves:
+                btn = Button(
+                    description=f"{edge[0]}-{edge[1]}",
+                    layout=Layout(width='80px')
+                )
+                # Use a lambda default argument to capture the current edge.
+                btn.on_click(lambda b, edge=edge: self.make_move(edge))
+                move_buttons.append(btn)
+            self.moves_box.children = move_buttons
+        else:
+            # No valid moves remain: the matching is maximal.
+            self.moves_box.children = []
+            self.msg_out.clear_output()
+            with self.msg_out:
+                print("No more valid moves available. Maximal matching reached.\n")
+                print("Final Matching:", self.current_matching)
+                max_match = nx.algorithms.matching.max_weight_matching(self.graph, maxcardinality=True)
+                print("Maximum Matching (computed by networkx):", max_match)
+                if len(self.current_matching)*2 == len(self.graph.nodes()):
+                    print("Your matching is a Perfect Matching!")
+                else:
+                    print("Your matching is NOT a Perfect Matching.")
+                min_maximals = self.compute_minimal_maximal_matchings()
+                if min_maximals:
+                    print("One example of a Minimum Maximal Matching:", list(min_maximals[0]))
+                else:
+                    print("Could not compute a Minimum Maximal Matching for this graph.")
+                print("\nKey Definitions:")
+                print("  Matching: A set of edges with no two sharing a vertex.")
+                print("  Maximal Matching: A matching that cannot be extended by adding any other edge.")
+                print("  Maximum Matching: The matching with the largest number of edges.")
+                print("  Perfect Matching: A matching that covers every vertex in the graph.")
+                print("  Minimum Maximal Matching (MMM): Among all maximal matchings, one with the fewest edges.")
+    
+    def draw_graph(self):
+        """Display the current graph and highlight the matching edges in red."""
+        self.graph_out.clear_output(wait=True)
+        with self.graph_out:
+            plt.figure(figsize=(6,6))
+            # Use the bipartite layout based on left nodes.
+            pos = nx.bipartite_layout(self.graph, nodes=range(1, self.n_left+1))
+            # Draw all edges in light gray.
+            nx.draw(self.graph, pos, with_labels=True, node_color='lightblue',
+                    edge_color='gray', node_size=500)
+            # Highlight matched edges in red.
+            if self.current_matching:
+                nx.draw_networkx_edges(self.graph, pos, edgelist=list(self.current_matching),
+                                       edge_color='red', width=2)
+            plt.show()
+    
+    def make_move(self, edge):
+        """Add the selected edge to the matching and update the UI."""
+        self.current_matching.add(edge)
+        self.update_ui()
+    
+    def restart_game(self, b):
+        """Handler for the restart button; resets the game."""
+        self.reset_game()
+    
+    def compute_minimal_maximal_matchings(self):
+        """
+        Compute all maximal matchings (via backtracking) and return those with the minimum number of edges.
+        Suitable for small graphs.
+        """
+        all_maximal = []
+        edges = list(self.graph.edges())
+        n = len(edges)
+        
+        def backtrack(i, current_matching, used):
+            if i == n:
+                # Check if the current matching is maximal.
+                for e in edges:
+                    if e not in current_matching:
+                        if e[0] not in used and e[1] not in used:
+                            return
+                all_maximal.append(set(current_matching))
+                return
+            
+            # Option 1: Skip current edge.
+            backtrack(i+1, current_matching, used)
+            
+            # Option 2: Use current edge if possible.
+            e = edges[i]
+            if e[0] not in used and e[1] not in used:
+                new_used = used | {e[0], e[1]}
+                current_matching.append(e)
+                backtrack(i+1, current_matching, new_used)
+                current_matching.pop()
+        
+        backtrack(0, [], set())
+        if not all_maximal:
+            return None
+        min_size = min(len(m) for m in all_maximal)
+        min_maximals = [m for m in all_maximal if len(m) == min_size]
+        return min_maximals
+
+# Create an instance of the game.
+game = VisualMatchingGame()
